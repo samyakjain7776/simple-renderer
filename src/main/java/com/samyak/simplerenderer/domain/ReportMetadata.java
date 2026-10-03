@@ -1,13 +1,18 @@
-package com.samyak.simplerenderer;
+package com.samyak.simplerenderer.domain;
 
 import java.util.List;
 import java.util.Set;
 
-record ReportMetadata(String name, String fileType, Long rowCount, List<Column> columns) {
-    enum DataType { STRING, DECIMAL, DATE, BOOLEAN }
+public record ReportMetadata(String name, String fileType, Long rowCount, List<Column> columns) {
+    public enum DataType {
+        STRING,
+        DECIMAL,
+        DATE,
+        BOOLEAN
+    }
 
-    record Column(String columnName, DataType dataType, String format) {
-        Column {
+    public record Column(String columnName, DataType dataType, String format) {
+        public Column {
             if (columnName == null || columnName.isBlank() || columnName.length() > 128 || dataType == null) {
                 throw new InvalidReportException("Columns require a name of 1–128 characters and a supported dataType.");
             }
@@ -21,14 +26,18 @@ record ReportMetadata(String name, String fileType, Long rowCount, List<Column> 
             }
         }
 
-        String excelFormat() {
-            if ("yyyy-MM-dd".equals(format)) return "yyyy-mm-dd";
-            if (format != null) return format;
+        public String excelFormat() {
+            if ("yyyy-MM-dd".equals(format)) {
+                return "yyyy-mm-dd";
+            }
+            if (format != null) {
+                return format;
+            }
             return dataType == DataType.DATE ? "yyyy-mm-dd" : "General";
         }
     }
 
-    ReportMetadata {
+    public ReportMetadata {
         if (rowCount != null && rowCount < 0) {
             throw new InvalidReportException("rowCount must be a non-negative integer.");
         }
@@ -38,14 +47,19 @@ record ReportMetadata(String name, String fileType, Long rowCount, List<Column> 
         if (!"csv".equals(fileType) && !"xlsx".equals(fileType)) {
             throw new InvalidReportException("fileType must be csv or xlsx.");
         }
-        if (columns == null || columns.isEmpty() || columns.size() > 128 || columns.stream().anyMatch(java.util.Objects::isNull)) {
+        if (columns == null
+            || columns.isEmpty()
+            || columns.size() > 128
+            || columns.stream().anyMatch(java.util.Objects::isNull)) {
             throw new InvalidReportException("A report requires 1–128 columns.");
         }
         columns = List.copyOf(columns);
     }
 
-    String contentType() {
-        return fileType.equals("csv") ? "text/csv;charset=UTF-8"
-                : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    public String contentType() {
+        if (fileType.equals("csv")) {
+            return "text/csv;charset=UTF-8";
+        }
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     }
 }

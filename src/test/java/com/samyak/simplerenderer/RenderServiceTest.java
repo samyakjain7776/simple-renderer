@@ -1,5 +1,8 @@
 package com.samyak.simplerenderer;
 
+import com.samyak.simplerenderer.domain.InvalidReportException;
+import com.samyak.simplerenderer.parser.StreamingReportReader;
+import com.samyak.simplerenderer.service.RenderService;
 import org.apache.poi.ss.usermodel.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -63,6 +66,22 @@ class RenderServiceTest {
             assertTrue(first.getCell(3).getBooleanCellValue());
             assertEquals("1234567890123456.78", sheet.getRow(301).getCell(1).getStringCellValue());
             assertTrue(workbook.getNumCellStyles() < 10);
+        }
+    }
+
+    @Test void parallelChunksAreReassembledInInputOrder() throws Exception {
+        var rows = new StringBuilder("[");
+        for (int i = 0; i < 25; i++) {
+            if (i > 0) rows.append(',');
+            rows.append("[\"row-").append(i).append("\"]");
+        }
+        rows.append(']');
+        var service = new RenderService(directory, 10_000_000, 10_000_000, 100_000, 1, 4, 2, 3);
+
+        try (var artifact = service.render(input(report("csv", TEXT_COLUMN, rows.toString())))) {
+            var lines = Files.readAllLines(artifact.path());
+            assertEquals("\"Text\"", lines.getFirst());
+            for (int i = 0; i < 25; i++) assertEquals("\"row-" + i + "\"", lines.get(i + 1));
         }
     }
 

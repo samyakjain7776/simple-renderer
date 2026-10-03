@@ -1,19 +1,17 @@
 # Simple Renderer
 
-A Java/Spring Boot service that converts metadata-driven JSON into CSV or XLSX reports. Jackson parses input one row at a time; Apache POI SXSSF writes XLSX with a 100-row memory window.
-
-This is an independent implementation using synthetic data. It contains no Goldman Sachs source code or internal assets. Production metrics from the original project do not describe this version.
+A Spring Boot service that turns JSON into CSV and Excel reports. Jackson reads the input row by row, workers convert the values, and a single writer saves them in order. Excel output uses Apache POI SXSSF to avoid keeping the whole workbook in memory.
 
 ## Run
 
-Requires JDK 21 or newer. The Maven wrapper downloads Maven on first use.
+Requires Java 21 or newer.
 
 ```sh
 ./mvnw verify
 ./mvnw spring-boot:run
 ```
 
-The service listens on `127.0.0.1:8080`.
+Send a report to `localhost:8080`:
 
 ```sh
 curl --fail-with-body http://127.0.0.1:8080/reports \
@@ -22,50 +20,42 @@ curl --fail-with-body http://127.0.0.1:8080/reports \
   -o /tmp/positions.xlsx
 ```
 
-Set `metadata.fileType` to `csv` and save the response as `.csv` for CSV output. To run the packaged service:
-
-```sh
-java -jar target/simple-renderer-0.1.0-SNAPSHOT.jar
-```
+For CSV, set `metadata.fileType` to `csv` and save the response as `.csv`.
 
 ## Input
 
-The root object must contain `metadata` followed by `values`, in that order. The optional `metadata.rowCount` declares the exact number of data rows (excluding the header); when present, it must be a non-negative integer and match the input. Each value is an array whose width matches the column list. See [examples/positions.json](examples/positions.json).
+See [positions.json](examples/positions.json) for a complete request.
 
-| Column type | Input | Output |
+Send `metadata` before `values`. The renderer needs the column definitions before it can process rows. Each row must have one value per column. If `rowCount` is included, it must match the number of data rows, excluding the header.
+
+| Type | Accepted value | Optional format |
 | --- | --- | --- |
-| `STRING` | JSON string | Text; never inferred as an XLSX formula |
-| `DECIMAL` | JSON number or numeric string | Numeric cell; values exceeding 15 significant digits become XLSX text to preserve precision |
-| `DATE` | ISO `yyyy-MM-dd` string, years 1900–9999 | Excel date or ISO text in CSV |
-| `BOOLEAN` | JSON `true` or `false` | Boolean |
+| `STRING` | JSON string | `General` |
+| `DECIMAL` | Number or numeric string | `0`, `0.00`, `#,##0.00` |
+| `DATE` | `yyyy-MM-dd` string, years 1900–9999 | `yyyy-MM-dd`, `yyyy-mm-dd`, `mm/dd/yyyy` |
+| `BOOLEAN` | `true` or `false` | `General` |
 
-All types accept `null`. Decimal strings are preferable when the producer might round JSON numbers. Decimal precision and absolute scale are limited to 100. Numeric XLSX cells still use Excel's floating-point representation.
+All types accept `null`. Formats control Excel display; CSV dates remain ISO text. Decimals with more than 15 significant digits are written as Excel text to preserve precision. Other numeric cells use Excel's floating-point representation. Decimal precision and absolute scale are capped at 100.
 
-Optional formats: decimals support `0`, `0.00`, `#,##0.00`; dates support `yyyy-MM-dd` (as in the design document), `yyyy-mm-dd`, and `mm/dd/yyyy`. STRING and BOOLEAN columns accept `General`. The `yyyy-MM-dd` spelling is translated to Excel’s `yyyy-mm-dd` display format. Formats affect XLSX display only. Columns have fixed widths; there is no full-report auto-sizing.
+CSV output uses UTF-8, quoted fields and CRLF line endings. Null and empty strings both become empty fields. Text that could be interpreted as a spreadsheet formula gets an apostrophe prefix; numeric values are unchanged. Excel string cells are always written as text.
 
-CSV uses UTF-8, quoted fields, doubled quotes and CRLF record separators. Null and empty strings both produce an empty field. Formula-like text and headings are prefixed with an apostrophe to reduce spreadsheet formula interpretation; this intentionally changes exported text. Negative numeric values are preserved.
+## How it works
 
-## Rendering flow
+1. Read the metadata and prepare column styles.
+2. Read rows into chunks, stopping at the row limit or character target.
+3. Convert chunks on worker threads. Wait for results in input order.
+4. Write rows to a temporary CSV or XLSX file. SXSSF keeps 100 rows in memory and flushes older rows to disk.
+5. Validate the end of the input, finish the file, send it, and delete it.
 
-```text
-HTTP input → Jackson parser → typed row → CSV / SXSSF writer
-                                             ↓
-                                      temporary artifact
-                                             ↓
-                             validate EOF and finalize file
-                                             ↓
-                                        HTTP download
-                                             ↓
-                                     delete artifact
-```
+Only the request thread touches the writer. A chunk keeps its slot until it has been written, even if its worker has already finished. If the first chunk is slow, the in-flight limit stops further reading.
 
-The first version is sequential: one request thread owns parsing and writing, preserving row order directly. The JSON rows are never collected into a whole-report list. Metadata is bounded to 64 Ki characters, rows to 128 Ki characters, cells to 32,767 characters, and schemas to 128 columns. XLSX styles are reused per format. Temporary files are used for output staging and SXSSF sheet data; bounded row memory does not mean zero disk usage.
+The character target can be exceeded by the final row, which is capped at 128 Ki characters. Cells are limited to 32,767 characters, metadata to 64 Ki characters, and reports to 128 columns. These limits bound retained data, not exact heap usage.
 
-Responses start only after the entire input has been validated and the file has been finalized. Failed renders delete staged artifacts. An admission permit stays held through download and cleanup. Invalid reports return 400, size limits return 413, and a busy renderer returns 429. Transport failures after a download starts cannot be replaced with a JSON error response.
+Invalid input returns 400, configured size limits return 413, and a busy service returns 429. The concurrency slot stays occupied until the download and cleanup finish.
 
 ## Configuration
 
-Override these Spring properties with `--property=value` when running the jar.
+Defaults are in [application.properties](src/main/resources/application.properties).
 
 | Property | Default |
 | --- | --- |
@@ -73,14 +63,14 @@ Override these Spring properties with `--property=value` when running the jar.
 | `renderer.max-output-bytes` | 104857600 (100 MiB) |
 | `renderer.max-rows` | 1000000 |
 | `renderer.max-concurrent-reports` | 2 |
+| `renderer.worker-threads` | 4 |
+| `renderer.chunk-size` | 500 rows |
+| `renderer.max-chunk-characters` | 262144 characters |
+| `renderer.max-in-flight-chunks` | 4 |
 | `renderer.staging-directory` | `${java.io.tmpdir}/simple-renderer` |
 
-The output byte limit covers the final CSV/XLSX artifact, not POI's intermediate sheet files. POI manages its own temporary sheet files under the JVM temporary directory and removes them on close. The service does not yet impose a total temporary-disk quota or report deadline. Keep it local while those deployment limits are unfinished.
+The service binds to `127.0.0.1`. The output limit covers the finished file, not POI's temporary sheet files. There is no total disk quota or report timeout.
 
-## Tests and next step
+## Tests
 
-Tests reopen generated XLSX files, verify CSV escaping and formula handling, exercise malformed input and resource limits, check permit/file cleanup, and send real HTTP requests to the Spring Boot server. A reader test verifies that the first row is available without consuming the whole input.
-
-Next: add bounded chunk transformation with ordered output, then benchmark it against this sequential baseline. No large-input throughput or peak-memory benchmarks have been run yet.
-
-The design document’s illustrative JSON declares `rowCount: 100000` but shows only two rows. A complete request must supply all declared rows or change `rowCount` to `2`, as the runnable example does.
+`./mvnw verify` checks the HTTP endpoint, input validation, CSV escaping, Excel types and formats, cleanup, chunk limits, and output order when the first worker is delayed. Throughput on multi-GB inputs has not been benchmarked.

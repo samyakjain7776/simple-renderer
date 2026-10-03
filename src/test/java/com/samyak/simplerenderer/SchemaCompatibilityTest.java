@@ -1,5 +1,8 @@
 package com.samyak.simplerenderer;
 
+import com.samyak.simplerenderer.domain.InvalidReportException;
+import com.samyak.simplerenderer.parser.StreamingReportReader;
+import com.samyak.simplerenderer.service.RenderService;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -13,7 +16,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class SchemaCompatibilityTest {
     @TempDir Path directory;
 
-    // Original document schema; rowCount varies because its example shows only two of 100000 rows.
     private static String documentReport(long count) {
         return """
             {
@@ -39,7 +41,7 @@ class SchemaCompatibilityTest {
         return new RenderService(directory, 1_000_000, 1_000_000, 100_000, 1);
     }
 
-    @Test void originalDocumentMetadataIsAcceptedWithoutChangingFieldNamesOrFormats() throws Exception {
+    @Test void acceptsRowCountAndColumnFormats() throws Exception {
         try (var reader = new StreamingReportReader(input(documentReport(100000)))) {
             var metadata = reader.readMetadata();
             assertEquals(100000L, metadata.rowCount());
@@ -49,7 +51,7 @@ class SchemaCompatibilityTest {
         }
     }
 
-    @Test void documentSchemaRendersCorrectXlsxWithMatchingCount() throws Exception {
+    @Test void rendersXlsxWithMatchingRowCount() throws Exception {
         try (var artifact = service().render(input(documentReport(2)));
              var workbook = WorkbookFactory.create(artifact.path().toFile())) {
             var sheet = workbook.getSheetAt(0);
