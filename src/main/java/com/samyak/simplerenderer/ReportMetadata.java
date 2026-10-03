@@ -3,7 +3,7 @@ package com.samyak.simplerenderer;
 import java.util.List;
 import java.util.Set;
 
-record ReportMetadata(String name, String fileType, List<Column> columns) {
+record ReportMetadata(String name, String fileType, Long rowCount, List<Column> columns) {
     enum DataType { STRING, DECIMAL, DATE, BOOLEAN }
 
     record Column(String columnName, DataType dataType, String format) {
@@ -13,8 +13,8 @@ record ReportMetadata(String name, String fileType, List<Column> columns) {
             }
             Set<String> formats = switch (dataType) {
                 case DECIMAL -> Set.of("0", "0.00", "#,##0.00");
-                case DATE -> Set.of("yyyy-mm-dd", "mm/dd/yyyy");
-                default -> Set.of();
+                case DATE -> Set.of("yyyy-MM-dd", "yyyy-mm-dd", "mm/dd/yyyy");
+                default -> Set.of("General");
             };
             if (format != null && !formats.contains(format)) {
                 throw new InvalidReportException("Unsupported column format.");
@@ -22,12 +22,16 @@ record ReportMetadata(String name, String fileType, List<Column> columns) {
         }
 
         String excelFormat() {
+            if ("yyyy-MM-dd".equals(format)) return "yyyy-mm-dd";
             if (format != null) return format;
             return dataType == DataType.DATE ? "yyyy-mm-dd" : "General";
         }
     }
 
     ReportMetadata {
+        if (rowCount != null && rowCount < 0) {
+            throw new InvalidReportException("rowCount must be a non-negative integer.");
+        }
         if (name == null || !name.matches("[A-Za-z0-9][A-Za-z0-9 _-]{0,63}")) {
             throw new InvalidReportException("Report name must be 1–64 letters, digits, spaces, underscores or hyphens.");
         }

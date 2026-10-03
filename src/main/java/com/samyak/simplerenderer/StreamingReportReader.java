@@ -54,9 +54,17 @@ final class StreamingReportReader implements AutoCloseable {
 
     List<Object> nextRow(ReportMetadata metadata) throws IOException {
         JsonToken token = parser.nextToken();
-        if (token == JsonToken.END_ARRAY) return null;
+        if (token == JsonToken.END_ARRAY) {
+            if (metadata.rowCount() != null && rowNumber != metadata.rowCount()) {
+                throw new InvalidReportException("rowCount does not match the number of data rows.");
+            }
+            return null;
+        }
         expect(token, JsonToken.START_ARRAY);
         rowNumber++;
+        if (metadata.rowCount() != null && rowNumber > metadata.rowCount()) {
+            throw new InvalidReportException("Data contains more rows than rowCount.");
+        }
         var row = new ArrayList<Object>(metadata.columns().size());
         int characters = 0;
         while ((token = parser.nextToken()) != JsonToken.END_ARRAY) {
