@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "Positions",
+    "fileType": "xlsx",
+    "columns": [
+      {"columnName": "ID", "dataType": "STRING"},
+      {"columnName": "Amount", "dataType": "DECIMAL", "format": "#,##0.00"},
+      {"columnName": "Date", "dataType": "DATE", "format": "yyyy-mm-dd"},
+      {"columnName": "Active", "dataType": "BOOLEAN"}
+    ]
+  },
+  "values": [
+    ["EXAMPLE-001", "1500000.50", "2026-01-01", true],
+    ["EXAMPLE-002", "250000.00", "2026-01-02", false]
+  ]
+}
